@@ -1,10 +1,9 @@
 import hashlib
-import math
 import uuid
 import bcrypt
-from flask import Flask, json, render_template, url_for, redirect, flash, session, request, make_response, jsonify
+from flask import Flask,session, request, jsonify
 from flask_jwt_extended import JWTManager, create_access_token, verify_jwt_in_request, \
-    set_access_cookies, get_jwt_identity, decode_token, create_refresh_token, set_refresh_cookies
+    set_access_cookies, get_jwt_identity, create_refresh_token
 import sqlite3 as lite
 import datetime
 from flask_jwt_extended.exceptions import NoAuthorizationError
@@ -75,13 +74,11 @@ def log():
         else:
             if bcrypt.checkpw(form['password'].encode("utf8"), usr_pass[0].encode("utf8")):
                 session['username'] = form['username']
-                # refresh_token = create_refresh_token(identity=form['username'],
-                #                                      expires_delta=datetime.timedelta(seconds=expiration_time))
+                refresh_token = create_refresh_token(identity=form['username'],
+                                                     expires_delta=datetime.timedelta(seconds=expiration_time))
                 access_token = create_access_token(identity=form['username'],
                                                    expires_delta=datetime.timedelta(seconds=expiration_time))
-                response = jsonify({'login': True, "JWT": access_token})
-                # set_access_cookies(response, access_token)
-                # set_refresh_cookies(response, refresh_token)
+                response = jsonify({'login': True, "JWT": access_token, "refresh_token": refresh_token})
                 app.config["JWT_COOKIE_CSRF_PROTECT"] = False
                 response.status_code = 200
                 return response
@@ -99,10 +96,8 @@ def log():
 def linkage():
     verify_jwt_in_request(locations=['headers', 'cookies'])
     current_user = get_jwt_identity()
-    print("current_user", current_user)
     if not get_jwt_identity():
         return jsonify({'msg': 'Login please!'}, 401)
-    short_url = None
     human_url = None
     form = request.args.to_dict()
     hash_symbols = 8
@@ -111,13 +106,12 @@ def linkage():
     else:
         HASH_SIZE = int(hash_symbols)
     if request.method == 'POST':
-        # url = form['source_link'].partition(":5")[0] + f":{client_port}/"
         url = form['source_link']
         short_link = cur.execute("SELECT * FROM urls WHERE short_url = ?", (url,)).fetchall()
         if short_link:
             return jsonify({'msg': 'It is a short url!'}), 401
         var = cur.execute("SELECT * FROM urls WHERE original_url = ? AND username = ?",
-                          (url, form["username"],)).fetchall()
+                          (url, current_user,)).fetchall()
         if var:
             return jsonify({'msg': 'This url is already exists!'}), 401
         if not url:
@@ -125,8 +119,8 @@ def linkage():
         if not form['human_link']:
             hash_id = hashlib.sha256(uuid.uuid4().hex.encode() + form['source_link'].encode()).hexdigest()[-HASH_SIZE:]
             short_url = request.host_url.partition(":5")[0] + f":{client_port}/" + hash_id
-            con.execute('INSERT INTO urls (original_url, short_url, link_type, username) VALUES (?,?,?,?)',
-                        (form["source_link"], short_url, int(form["link_type"]), form["username"]))
+            con.execute('INSERT INTO urls (original_url, short_url, link_type, username, human_url) VALUES (?,?,?,?,?)',
+                        (form["source_link"], short_url, int(form["link_type"]), current_user, ""))
             con.commit()
         else:
             human_url = request.host_url.partition(":5")[0] + f":{client_port}/" + form["human_link"]
@@ -137,7 +131,7 @@ def linkage():
             short_url = request.host_url.partition(":5")[0] + f":{client_port}/" + hash_id
             con.execute(
                 'INSERT INTO urls (original_url, human_url, short_url,  link_type, username)  VALUES (?,?,?,?,?)',
-                (form["source_link"], human_url, short_url, int(form["link_type"]), form["username"]))
+                (form["source_link"], human_url, short_url, int(form["link_type"]), current_user))
             con.commit()
         return jsonify({"short_url": short_url, "attribute": human_url}), 200
     if request.method == "OPTIONS":
@@ -176,7 +170,7 @@ def url_redirect(url_name):
         try:
             verify_jwt_in_request()
         except NoAuthorizationError:
-            return jsonify("Please, authorize!", {"url_name": url_name, "host_url": request.host_url}), 403
+            return jsonify({"msg": "Please, authorize!", "url_name": url_name, "host_url": request.host_url}), 403
         if source_url[0]:
             original_id = source_url[0]
             clicks = cur.execute("SELECT clicks FROM urls WHERE short_url = ? or human_url = ?",
@@ -222,12 +216,13 @@ def url_redirect(url_name):
 @app.route('/stats', methods=["GET", "POST", "DELETE", "PATCH", "OPTIONS"])
 def stats():
     form = request.args.to_dict()
-    # get the stats form
-    # verify_jwt_in_request()
-    # current_user = get_jwt_identity()
-    # print(get_jwt_identity())
+    try:
+        verify_jwt_in_request()
+    except NoAuthorizationError:
+        return jsonify({"msg": "Please, authorize!"}), 403
+    current_user = get_jwt_identity()
     if request.method == "GET":
-        urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (form['username'],)).fetchall()
+        urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (current_user,)).fetchall()
         return jsonify({"urls_list": urls_list}), 200
     # edit psydonim
     if request.method == "POST":
@@ -236,8 +231,8 @@ def stats():
         edit_id = form['edit_id']
         human_url = psydo
         cur.execute('UPDATE urls SET human_url = ?, link_type = ? WHERE (id = ?) AND (username = ?)',
-                    (human_url, link_type, edit_id, form['username'],))
-        urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (form['username'],)).fetchall()
+                    (human_url, link_type, edit_id, current_user,))
+        urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (current_user,)).fetchall()
         con.commit()
         return jsonify({"urls_list": urls_list}), 200
 
@@ -300,7 +295,9 @@ def admin():
         return jsonify({"urls": urls}), 200
     if request.method == "DELETE":
         del_id = form["del_id"]
+        username = cur.execute("SELECT username FROM users WHERE id = ?", (del_id,))
         cur.execute('DELETE FROM users WHERE id = ?', (del_id,))
+        cur.execute('DELETE FROM urls WHERE username = ?', (username,))
         con.commit()
         return jsonify({"urls": urls}), 200
     if request.method == "OPTIONS":
@@ -317,7 +314,10 @@ def free_link():
         return jsonify({'msg': "Enter source link"}), 200
     if request.method == 'POST':
         url = form['source_link']
-        url_cnt = con.execute('SELECT COUNT(*) FROM urls').fetchall()
+        data = datetime.datetime.utcnow()-datetime.timedelta(seconds=-20)
+        con.execute(f"DELETE FROM urls WHERE created > {data.replace(microsecond=0).timestamp()} "
+                    f"AND created < {datetime.datetime.utcnow().replace(microsecond=0).timestamp()}")
+        con.commit()
         hash_symbols = 8
         if hash_symbols < 8:
             HASH_SIZE = 8
@@ -348,7 +348,6 @@ def authorize(url):
                 access_token = create_access_token(identity=form['username'],
                                                    expires_delta=datetime.timedelta(seconds=expiration_time))
                 redirect_url = request.host_url.partition(":5")[0] + f":{client_port}/" + url
-                # {request.host_url.partition(":5")[0]}: {backend_port}
                 resp = jsonify({"msg": "Success auth", "redirect_url": redirect_url, "access_token": access_token})
                 set_access_cookies(resp, access_token)
                 app.config["JWT_COOKIE_CSRF_PROTECT"] = False
