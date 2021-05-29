@@ -38,7 +38,7 @@ app.config["JWT_SECRET_KEY"] = "lkdspcol2DS43r3DCSsd"
 app.config["JWT_COOKIE_CSRF_PROTECT"] = False
 jwt = JWTManager(app)
 salt = bcrypt.gensalt()
-expiration_time = 200
+expiration_time = 20000
 
 
 @app.route('/register', methods=['GET', 'POST', 'OPTIONS'])
@@ -47,7 +47,7 @@ def register():
     if request.method == "POST":
         if form["password"] != form["valid_password"]:
             return jsonify({'msg': "Passwords are incompatible. Please reenter passwords"}), 404
-        user = cur.execute("Select id from users where username = ?", (form['password'],)).fetchone()
+        user = cur.execute("Select id from users where username = ?", (form['username'],)).fetchone()
         if user:
             return jsonify({'msg': "Such login is used, please choose another one"}), 404
         hash_pass = bcrypt.hashpw(form["password"].encode("utf8"), salt).decode("utf8")
@@ -94,12 +94,13 @@ def log():
 
 @app.route('/linkage', methods=['POST', 'OPTIONS'])
 def linkage():
-    verify_jwt_in_request(locations=['headers', 'cookies'])
-    current_user = get_jwt_identity()
-    if not get_jwt_identity():
+    try:
+        verify_jwt_in_request(locations=['headers', 'cookies'])
+    except NoAuthorizationError:
         return jsonify({'msg': 'Login please!'}, 401)
     human_url = None
     form = request.args.to_dict()
+    current_user = form['username']
     hash_symbols = 8
     if hash_symbols < 8:
         HASH_SIZE = 8
@@ -216,11 +217,7 @@ def url_redirect(url_name):
 @app.route('/stats', methods=["GET", "POST", "DELETE", "PATCH", "OPTIONS"])
 def stats():
     form = request.args.to_dict()
-    try:
-        verify_jwt_in_request()
-    except NoAuthorizationError:
-        return jsonify({"msg": "Please, authorize!"}), 403
-    current_user = get_jwt_identity()
+    current_user = form['username']
     if request.method == "GET":
         urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (current_user,)).fetchall()
         return jsonify({"urls_list": urls_list}), 200
