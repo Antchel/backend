@@ -217,7 +217,12 @@ def url_redirect(url_name):
 @app.route('/stats', methods=["GET", "POST", "DELETE", "PATCH", "OPTIONS"])
 def stats():
     form = request.args.to_dict()
-    current_user = form['username']
+    try:
+        verify_jwt_in_request(locations=['headers', 'cookies'])
+    except NoAuthorizationError:
+        return jsonify({'msg': 'Login please!'}, 401)
+    # current_user = form['username']
+    current_user = get_jwt_identity()
     if request.method == "GET":
         urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (current_user,)).fetchall()
         return jsonify({"urls_list": urls_list}), 200
