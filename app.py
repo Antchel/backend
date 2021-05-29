@@ -101,6 +101,7 @@ def linkage():
     human_url = None
     form = request.args.to_dict()
     current_user = get_jwt_identity()
+    print(current_user)
     hash_symbols = 8
     if hash_symbols < 8:
         HASH_SIZE = 8
@@ -121,7 +122,7 @@ def linkage():
             hash_id = hashlib.sha256(uuid.uuid4().hex.encode() + form['source_link'].encode()).hexdigest()[-HASH_SIZE:]
             short_url = request.host_url.partition(":5")[0] + f":{client_port}/" + hash_id
             con.execute('INSERT INTO urls (original_url, short_url, link_type, username, human_url) VALUES (?,?,?,?,?)',
-                        (form["source_link"], short_url, int(form["link_type"]), current_user, ""))
+                        (form["source_link"], short_url, int(form["link_type"]), current_user, "",))
             con.commit()
         else:
             human_url = request.host_url.partition(":5")[0] + f":{client_port}/" + form["human_link"]
@@ -130,9 +131,10 @@ def linkage():
                 return jsonify({'msg': "Such attribute is already exists"}), 401
             hash_id = hashlib.sha256(uuid.uuid4().hex.encode() + form["source_link"].encode()).hexdigest()[-HASH_SIZE:]
             short_url = request.host_url.partition(":5")[0] + f":{client_port}/" + hash_id
+            print(current_user)
             con.execute(
                 'INSERT INTO urls (original_url, human_url, short_url,  link_type, username)  VALUES (?,?,?,?,?)',
-                (form["source_link"], human_url, short_url, int(form["link_type"]), current_user))
+                (form["source_link"], human_url, short_url, int(form["link_type"]), current_user,))
             con.commit()
         return jsonify({"short_url": short_url, "attribute": human_url}), 200
     if request.method == "OPTIONS":
@@ -241,8 +243,8 @@ def stats():
     # delete attribute
     if request.method == "DELETE":
         del_id = form['del_id']
-        cur.execute('DELETE FROM urls WHERE id = ? AND username = ?', (del_id, form['username'])).fetchall()
-        urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (form['username'],)).fetchall()
+        cur.execute('DELETE FROM urls WHERE id = ? AND username = ?', (del_id, current_user)).fetchall()
+        urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (current_user,)).fetchall()
         con.commit()
         return jsonify({"urls_list": urls_list}), 200
 
@@ -250,8 +252,8 @@ def stats():
     if request.method == "PATCH":
         del_id = form['del_id']
         cur.execute('UPDATE urls SET human_url = "" WHERE id = ? AND username = ?',
-                    (del_id, form["username"],)).fetchall()
-        urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (form["username"],)).fetchall()
+                    (del_id, current_user,)).fetchall()
+        urls_list = cur.execute('SELECT * FROM urls WHERE username = ?', (current_user,)).fetchall()
         con.commit()
         return jsonify({"urls_list": urls_list}), 200
 
@@ -316,7 +318,7 @@ def free_link():
         return jsonify({'msg': "Enter source link"}), 200
     if request.method == 'POST':
         url = form['source_link']
-        data = datetime.datetime.utcnow()-datetime.timedelta(seconds=-20)
+        data = datetime.datetime.utcnow()-datetime.timedelta(days=-30)
         con.execute(f"DELETE FROM urls WHERE created > {data.replace(microsecond=0).timestamp()} "
                     f"AND created < {datetime.datetime.utcnow().replace(microsecond=0).timestamp()}")
         con.commit()
