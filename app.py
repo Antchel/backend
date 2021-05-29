@@ -100,7 +100,7 @@ def linkage():
         return jsonify({'msg': 'Login please!'}, 401)
     human_url = None
     form = request.args.to_dict()
-    current_user = form['username']
+    current_user = get_jwt_identity()
     hash_symbols = 8
     if hash_symbols < 8:
         HASH_SIZE = 8
